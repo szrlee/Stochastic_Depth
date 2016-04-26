@@ -17,8 +17,10 @@ function ResidualDrop:__init(deathRate, nChannels, nOutChannels, stride)
 
     self.net = nn.Sequential()
     -- conv1x1
-    self.net:add(cudnn.SpatialBatchNormalization(nChannels))
-    self.net:add(cudnn.ReLU(true))
+    if nChannels == nOutChannels then
+        self.net:add(cudnn.SpatialBatchNormalization(nChannels))
+        self.net:add(cudnn.ReLU(true))
+    end
     self.net:add(cudnn.SpatialConvolution(nChannels, nBottleneckChannels, 1,1, stride,stride, 0,0)
                                              :init('weight', nninit.kaiming, {gain = 'relu'})
                                              :init('bias', nninit.constant, 0))
@@ -34,21 +36,32 @@ function ResidualDrop:__init(deathRate, nChannels, nOutChannels, stride)
     -- conv1x1
     self.net:add(cudnn.SpatialBatchNormalization(nBottleneckChannels))
     self.net:add(cudnn.ReLU(true))
-    self.net:add(cudnn.SpatialConvolution(nBottleneckChannels, nOutChannels, 1,1, stride,stride, 0,0)
+    self.net:add(cudnn.SpatialConvolution(nBottleneckChannels, nOutChannels, 1,1, 1,1 , 0,0)
                                              :init('weight', nninit.kaiming, {gain = 'relu'})
                                              :init('bias', nninit.constant, 0))
 
 
     -- shortcut
     self.skip = nn.Sequential()
-    self.skip:add(nn.Identity())
-    if stride > 1 then
+    if nOutChannels == nChannels then
+        self.skip:add(nn.Identity())
+    end
+    --[[ if stride > 1 then
        -- optional downsampling
        self.skip:add(nn.SpatialAveragePooling(1, 1, stride,stride))
     end
     if nOutChannels > nChannels then
        -- optional padding, this is option A in their paper
        self.skip:add(nn.Padding(1, (nOutChannels - nChannels), 3))
+    elseif nOutChannels < nChannels then
+       print('Do not do this! nOutChannels < nChannels!')
+    end]]
+
+    if nOutChannels > nChannels then
+       -- optional padding, this is option A in their paper
+       self.skip:add(cudnn.SpatialConvolution(nChannels,nOutChannels,1,1,stride,stride,0,0)
+                                             :init('weight', nninit.kaiming, {gain = 'relu'})
+                                             :init('bias', nninit.constant, 0))
     elseif nOutChannels < nChannels then
        print('Do not do this! nOutChannels < nChannels!')
     end
@@ -61,6 +74,10 @@ function ResidualDrop:updateOutput(input)
     self.output:resizeAs(skip_forward):copy(skip_forward)
     if self.train then
       if self.gate then -- only compute convolutional output when gate is open
+        --[[ Debug
+            print('skip_forward\n', skip_forward:size())
+            local net_forward = self.net:forward(input)
+            print('net_forward\n', net_forward:size())]]
         self.output:add(self.net:forward(input))
       end
     else

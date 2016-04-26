@@ -15,8 +15,10 @@ function ResidualDrop:__init(deathRate, nChannels, nOutChannels, stride)
     stride = stride or 1
 
     self.net = nn.Sequential()
-    self.net:add(cudnn.SpatialBatchNormalization(nChannels))
-    self.net:add(cudnn.ReLU(true))
+    if nChannels == nOutChannels then
+        self.net:add(cudnn.SpatialBatchNormalization(nChannels))
+        self.net:add(cudnn.ReLU(true))
+    end
     self.net:add(cudnn.SpatialConvolution(nChannels, nOutChannels, 3,3, stride,stride, 1,1)
                                              :init('weight', nninit.kaiming, {gain = 'relu'})
                                              :init('bias', nninit.constant, 0))

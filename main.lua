@@ -11,7 +11,7 @@ cudnn.fastest = true
 cudnn.benchmark = true
 
 opt = lapp[[
-  --bottleNeck    (default false)       Using Deep BottleNeck Architecture or not
+  --bottleNeck    (default true)       Using Deep BottleNeck Architecture or not, true or false
   --maxEpochs     (default 500)         Maximum number of epochs to train the network
   --batchSize     (default 128)         Mini-batch size
   --N             (default 18)          Model has 6*N+2 convolutional layers
@@ -25,9 +25,9 @@ opt = lapp[[
 ]]
 print(opt)
 
-if opt.bottleNeck == 'false' then
+if opt.bottleNeck == false then
     require 'ResidualDrop'
-elseif opt.bottleNeck == 'true' then
+elseif opt.bottleNeck == true then
     require 'ResDropBottleneck'
 else
     error('invalid opt.bottleNeck: ' .. opt.bottleNeck)
@@ -69,11 +69,11 @@ lrSchedule = {svhn     = {0.6, 0.7 },
               cifar100 = {0.5, 0.75}}
 
 ---- Buidling the residual network model ----
-if opt.bottleNeck == 'true' then
-    local nStages = {16, 64, 128, 256} 
+if opt.bottleNeck == true then
+    nStages = {16, 64, 128, 256} 
                  -- {16, 16*4, 32*4, 64*4}
-elseif opt.bottleNeck == 'false' then
-    local nStages = {16, 16, 32, 64}
+elseif opt.bottleNeck == false then
+    nStages = {16, 16, 32, 64}
 end
 
 -- Input: 3x32x32
@@ -84,20 +84,32 @@ model:add(cudnn.SpatialConvolution(3, nStages[1], 3,3, 1,1, 1,1)
             :init('weight', nninit.kaiming, {gain = 'relu'})
             :init('bias', nninit.constant, 0))
 ------> 16, 32x32   First Group
+if nStages[1] ~= nStages[2] then
+    model:add(cudnn.SpatialBatchNormalization(nStages[1]))
+    model:add(cudnn.ReLU(true))
+end
 addResidualDrop(model, nil, nStages[1], nStages[2], 1)
 for i=1,opt.N-1 do   addResidualDrop(model, nil, nStages[2])   end
 ------> 32, 16x16   Second Group
+if nStages[2] ~= nStages[3] then
+    model:add(cudnn.SpatialBatchNormalization(nStages[2]))
+    model:add(cudnn.ReLU(true))
+end
 addResidualDrop(model, nil, nStages[2], nStages[3], 2)
 for i=1,opt.N-1 do   addResidualDrop(model, nil, nStages[3])   end
 ------> 64, 8x8     Third Group
+if nStages[3] ~= nStages[4] then
+    model:add(cudnn.SpatialBatchNormalization(nStages[3]))
+    model:add(cudnn.ReLU(true))
+end
 addResidualDrop(model, nil, nStages[3], nStages[4], 2)
 for i=1,opt.N-1 do   addResidualDrop(model, nil, nStages[4])   end
 ------> 10, 8x8     Pooling, Linear, Softmax
 model:add(cudnn.SpatialBatchNormalization(nStages[4]))
 model:add(cudnn.ReLU(true))
-if opt.bottleNeck == 'false' then
+if opt.bottleNeck == false then
     model:add(nn.SpatialAveragePooling(8,8)):add(nn.Reshape(64))
-elseif opt.bottleNeck == 'true' then
+elseif opt.bottleNeck == true then
     model:add(nn.SpatialAveragePooling(8,8,1,1))
     model:add(nn.View(nStages[4]):setNumInputDims(3))
 end
@@ -115,6 +127,10 @@ model:cuda()
 loss = nn.ClassNLLCriterion()
 loss:cuda()
 collectgarbage()
+
+-- for i,module in ipairs(model:listModules()) do
+--   print(module)
+-- end
 -- print(model)   -- if you need to see the architecture, it's going to be long!
 
 ---- Determines the position of all the residual blocks ----
