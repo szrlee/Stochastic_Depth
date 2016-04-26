@@ -15,6 +15,8 @@ function ResidualDrop:__init(deathRate, nChannels, nOutChannels, stride)
     stride = stride or 1
 
     self.net = nn.Sequential()
+    self.net:add(cudnn.SpatialBatchNormalization(nChannels))
+    self.net:add(cudnn.ReLU(true))
     self.net:add(cudnn.SpatialConvolution(nChannels, nOutChannels, 3,3, stride,stride, 1,1)
                                              :init('weight', nninit.kaiming, {gain = 'relu'})
                                              :init('bias', nninit.constant, 0))
@@ -24,7 +26,6 @@ function ResidualDrop:__init(deathRate, nChannels, nOutChannels, stride)
                                       3,3, 1,1, 1,1)
                                       :init('weight', nninit.kaiming, {gain = 'relu'})
                                       :init('bias', nninit.constant, 0))
-    self.net:add(cudnn.SpatialBatchNormalization(nOutChannels))
     self.skip = nn.Sequential()
     self.skip:add(nn.Identity())
     if stride > 1 then
@@ -73,6 +74,5 @@ end
 ---- Adds a residual block to the passed in model ----
 function addResidualDrop(model, deathRate, nChannels, nOutChannels, stride)
    model:add(nn.ResidualDrop(deathRate, nChannels, nOutChannels, stride))
-   model:add(cudnn.ReLU(true))
    return model
 end
