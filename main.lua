@@ -62,8 +62,6 @@ model = nn.Sequential()
 model:add(cudnn.SpatialConvolution(3, 16, 3,3, 1,1, 1,1)
             :init('weight', nninit.kaiming, {gain = 'relu'})
             :init('bias', nninit.constant, 0))
-model:add(cudnn.SpatialBatchNormalization(16))
-model:add(cudnn.ReLU(true))
 ------> 16, 32,32   First Group
 for i=1,opt.N do   addResidualDrop(model, nil, 16)   end
 ------> 32, 16,16   Second Group
@@ -73,6 +71,8 @@ for i=1,opt.N-1 do   addResidualDrop(model, nil, 32)   end
 addResidualDrop(model, nil, 32, 64, 2)
 for i=1,opt.N-1 do   addResidualDrop(model, nil, 64)   end
 ------> 10, 8,8     Pooling, Linear, Softmax
+model:add(cudnn.SpatialBatchNormalization(64))
+model:add(cudnn.ReLU(true))
 model:add(nn.SpatialAveragePooling(8,8)):add(nn.Reshape(64))
 if opt.dataset == 'cifar10' or opt.dataset == 'svhn' then
   model:add(nn.Linear(64, 10))
