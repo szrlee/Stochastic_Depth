@@ -5,13 +5,13 @@ require 'cudnn'
 require 'optim'
 local nninit = require 'nninit'
 
-require 'ResidualDrop'
 
 -- Saves 40% time according to http://torch.ch/blog/2016/02/04/resnets.html
 cudnn.fastest = true
 cudnn.benchmark = true
 
 opt = lapp[[
+  --bottleNeck    (default false)       Using Deep BottleNeck Architecture or not
   --maxEpochs     (default 500)         Maximum number of epochs to train the network
   --batchSize     (default 128)         Mini-batch size
   --N             (default 18)          Model has 6*N+2 convolutional layers
@@ -24,13 +24,27 @@ opt = lapp[[
   --dataRoot      (default "")          Path to data (e.g. contains cifar10-train.t7)
 ]]
 print(opt)
+
+if opt.bottleNeck == 'false' then
+    require 'ResidualDrop'
+elseif opt.bottleNeck == 'true' then
+    require 'ResDropBottleneck'
+else
+    error('invalid opt.bottleNeck: ' .. opt.bottleNeck)
+end
+
 cutorch.setDevice(opt.device+1)   -- torch uses 1-based indexing for GPU, so +1
 cutorch.manualSeed(1)
 torch.manualSeed(1)
 torch.setnumthreads(1)            -- number of OpenMP threads, 1 is enough
 
 ---- Loading data ----
-if opt.dataset == 'svhn' then require 'svhn-dataset' else require 'cifar-dataset' end
+if opt.dataset == 'svhn' then
+    require 'svhn-dataset'
+else
+    require 'cifar-dataset'
+end
+
 all_data, all_labels = get_Data(opt.dataset, opt.dataRoot, true)  -- default do shuffling
 dataTrain = Dataset.LOADER(all_data, all_labels, "train", opt.batchSize, opt.augmentation)
 dataValid = Dataset.LOADER(all_data, all_labels, "valid", opt.batchSize)
@@ -55,29 +69,43 @@ lrSchedule = {svhn     = {0.6, 0.7 },
               cifar100 = {0.5, 0.75}}
 
 ---- Buidling the residual network model ----
+if opt.bottleNeck == 'true' then
+    local nStages = {16, 64, 128, 256} 
+                 -- {16, 16*4, 32*4, 64*4}
+elseif opt.bottleNeck == 'false' then
+    local nStages = {16, 16, 32, 64}
+end
+
 -- Input: 3x32x32
 print('Building model...')
 model = nn.Sequential()
-------> 3, 32,32
-model:add(cudnn.SpatialConvolution(3, 16, 3,3, 1,1, 1,1)
+------> 3, 32x32
+model:add(cudnn.SpatialConvolution(3, nStages[1], 3,3, 1,1, 1,1)
             :init('weight', nninit.kaiming, {gain = 'relu'})
             :init('bias', nninit.constant, 0))
-------> 16, 32,32   First Group
-for i=1,opt.N do   addResidualDrop(model, nil, 16)   end
-------> 32, 16,16   Second Group
-addResidualDrop(model, nil, 16, 32, 2)
-for i=1,opt.N-1 do   addResidualDrop(model, nil, 32)   end
-------> 64, 8,8     Third Group
-addResidualDrop(model, nil, 32, 64, 2)
-for i=1,opt.N-1 do   addResidualDrop(model, nil, 64)   end
-------> 10, 8,8     Pooling, Linear, Softmax
-model:add(cudnn.SpatialBatchNormalization(64))
+------> 16, 32x32   First Group
+addResidualDrop(model, nil, nStages[1], nStages[2], 1)
+for i=1,opt.N-1 do   addResidualDrop(model, nil, nStages[2])   end
+------> 32, 16x16   Second Group
+addResidualDrop(model, nil, nStages[2], nStages[3], 2)
+for i=1,opt.N-1 do   addResidualDrop(model, nil, nStages[3])   end
+------> 64, 8x8     Third Group
+addResidualDrop(model, nil, nStages[3], nStages[4], 2)
+for i=1,opt.N-1 do   addResidualDrop(model, nil, nStages[4])   end
+------> 10, 8x8     Pooling, Linear, Softmax
+model:add(cudnn.SpatialBatchNormalization(nStages[4]))
 model:add(cudnn.ReLU(true))
-model:add(nn.SpatialAveragePooling(8,8)):add(nn.Reshape(64))
+if opt.bottleNeck == 'false' then
+    model:add(nn.SpatialAveragePooling(8,8)):add(nn.Reshape(64))
+elseif opt.bottleNeck == 'true' then
+    model:add(nn.SpatialAveragePooling(8,8,1,1))
+    model:add(nn.View(nStages[4]):setNumInputDims(3))
+end
+
 if opt.dataset == 'cifar10' or opt.dataset == 'svhn' then
-  model:add(nn.Linear(64, 10))
+    model:add(nn.Linear(nStages[4], 10))
 elseif opt.dataset == 'cifar100' then
-  model:add(nn.Linear(64, 100))
+    model:add(nn.Linear(nStages[4], 100))
 else
   print('Invalid argument for dataset!')
 end
