@@ -11,10 +11,10 @@ cudnn.fastest = true
 cudnn.benchmark = true
 
 opt = lapp[[
-  --bottleNeck    (default true)       Using Deep BottleNeck Architecture or not, true or false
+  --bottleNeck    (default true)        Using Deep BottleNeck Architecture or not, true or false
   --maxEpochs     (default 500)         Maximum number of epochs to train the network
   --batchSize     (default 128)         Mini-batch size
-  --N             (default 18)          Model has 6*N+2 convolutional layers
+  --N             (default 18)          Model has 6*N+2(Non-Bottleneck) or 9*N+2(Bottleneck) convolutional layers
   --dataset       (default cifar10)     Use cifar10, cifar100 or svhn
   --deathMode     (default lin_decay)   Use lin_decay or uniform
   --deathRate     (default 0)           1-p_L for lin_decay, 1-p_l for uniform, 0 is constant depth
@@ -182,8 +182,8 @@ function accounting(training_time)
   local results = {evalModel(dataValid), evalModel(dataTest)}
   all_results[#all_results + 1] = results
   -- Saves the errors. These get covered up by new ones every time the function is called
-  torch.save(opt.resultFolder .. string.format('errors_%d_%s_%s_%.1f', 
-    opt.N, opt.dataset, opt.deathMode, opt.deathRate), all_results)
+  torch.save(opt.resultFolder .. string.format('errors_%d_%s_%s_%.1f_batch_%d_epochs_%d', 
+    opt.N, opt.dataset, opt.deathMode, opt.deathRate, opt.batchSize, opt.maxEpochs), all_results)
   if opt.dataset == 'svhn' then 
     print(string.format('Iter %d:\t%.2f%%\t\t%.2f%%\t\t%0.0fs', 
       sgdState.iterCounter, results[1]*100, results[2]*100, training_time))
